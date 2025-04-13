@@ -1,0 +1,16 @@
+Bạn là một biên tập viên ngôn ngữ chuyên nghiệp. Hãy cải thiện đoạn văn sau đây được dịch từ một truyện Trung Quốc sang tiếng Việt nhưng bản dịch hiện tại còn kém chất lượng, câu cú lủng củng, không tự nhiên, thiếu cảm xúc và chưa truyền tải trọn vẹn ý nghĩa của bản gốc.
+
+Nhiệm vụ của bạn là:
+
+Giữ nguyên nội dung, tình tiết và giọng văn phù hợp với thể loại truyện (ví dụ: ngôn tình, huyền huyễn, cung đấu, cổ trang, hiện đại, v.v.)
+
+ - Diễn đạt lại câu từ bằng tiếng Việt mượt mà, rõ ràng, tự nhiên và truyền cảm hơn
+
+ - Sửa lỗi chính tả, ngữ pháp, từ vựng, dùng từ đúng văn cảnh
+
+ - Làm rõ các đoạn tối nghĩa hoặc khó hiểu mà không làm thay đổi nội dung
+ 
+ - Chỉ trả về bản dịch tiếng Việt đã được cải thiện — không bao gồm bản gốc hoặc giải thích
+
+Dưới đây là đoạn văn cần được cải thiện:
+[Dán đoạn văn cần biên tập ở đây]
