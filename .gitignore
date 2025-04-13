@@ -142,4 +142,7 @@ cython_debug/
 output/
 
 # Credentials
-credentials.json 
+credentials.json
+token.pickle
+
+# ... rest of the file remains unchanged ... 
