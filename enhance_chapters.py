@@ -1,6 +1,7 @@
 import os
 import re # Import regex module for substitution
-import google.generativeai as genai
+import google.generativeai as genai # No longer needed
+import openai # Use OpenAI library for DeepSeek
 from dotenv import load_dotenv
 import time # Import time for potential delays/retries
 import argparse # Import argparse for command-line arguments
@@ -11,27 +12,49 @@ INPUT_DIR = "output/mục_thần_ký_txt"
 OUTPUT_DIR = "enhance_output"
 PROMPT_FILE = "prompt/translate.prompt.txt"
 PROMPT_PLACEHOLDER = "[Dán đoạn văn cần biên tập ở đây]"
-GEMINI_MODEL_NAME = "gemini-2.5-pro-exp-03-25" # Using 1.5 Pro as requested
+# GEMINI_MODEL_NAME = "gemini-2.5-pro-exp-03-25" # Old model name
+DEEPSEEK_MODEL_NAME = "deepseek-chat" # Target DeepSeek model
+DEEPSEEK_API_BASE = "https://api.deepseek.com" # DeepSeek API endpoint
+DEEPSEEK_TEMPERATURE = 1.3 # Recommended temperature for DeepSeek
+# TEMPERATURE = 1.3 # Remove the generic temperature constant
 
-# Cost Configuration (Verify pricing with official Google documentation)
-# Prices per 1,000 tokens for gemini-1.5-pro
-INPUT_PRICE_PER_1K_TOKENS = 0.0035 # Example price in USD
-OUTPUT_PRICE_PER_1K_TOKENS = 0.0105 # Example price in USD
+# Cost Configuration (!!! VERIFY PRICING AND UPDATE !!!)
+# Prices per 1,000 tokens
+# Gemini 1.5 Pro (Example)
+GEMINI_INPUT_PRICE = 0.0035
+GEMINI_OUTPUT_PRICE = 0.0105
+# DeepSeek Chat (Standard, Cache Miss - From User Input)
+DEEPSEEK_INPUT_PRICE = 0.00027 # $0.27 / 1M tokens
+DEEPSEEK_OUTPUT_PRICE = 0.00110 # $1.10 / 1M tokens
+
 MAX_CUMULATIVE_COST_USD = 5.00 # Cost limit for warnings
 CONCURRENT_LIMIT = 10 # Limit the number of concurrent API calls
+MAX_RETRIES = 3
+RETRY_DELAY_SECONDS = 30
 
 # --- Load Environment Variables ---
 load_dotenv()
-API_KEY = os.getenv("GOOGLE_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
 
-if not API_KEY:
-    print("Error: GOOGLE_API_KEY not found in environment variables.")
-    print("Please ensure it is set in your .env file or environment.")
+# Global variables for API clients (configured in main)
+openai_client = None
+
+# if not API_KEY:
+#     print("Error: GOOGLE_API_KEY not found in environment variables.")
+#     print("Please ensure it is set in your .env file or environment.")
+#     exit()
+if not DEEPSEEK_API_KEY:
+    print("Error: DEEPSEEK_API_KEY not found in environment variables.")
+    print("Please ensure it is set in your .env file.")
     exit()
 
-genai.configure(api_key=API_KEY)
+# Configure OpenAI client for DeepSeek
+client = openai.AsyncOpenAI(
+    api_key=DEEPSEEK_API_KEY,
+    base_url=DEEPSEEK_API_BASE,
+)
 
-# Removed global cumulative_cost
 
 # --- Helper Functions ---
 
@@ -63,13 +86,52 @@ def write_file_content(filepath, content):
         print(f"Error writing file {filepath}: {e}")
         return False # Indicate failure
 
+async def call_deepseek_api_async(prompt_text, filename):
+    """Calls the DeepSeek API asynchronously with retries and returns content + usage."""
+    print(f"[{filename}] Calling DeepSeek API ({DEEPSEEK_MODEL_NAME})... Length: {len(prompt_text)}")
+    last_exception = None
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = await client.chat.completions.create(
+                model=DEEPSEEK_MODEL_NAME,
+                messages=[{"role": "user", "content": prompt_text}],
+                temperature=DEEPSEEK_TEMPERATURE
+            )
+            # ... rest of successful response handling ...
+            input_tokens = response.usage.prompt_tokens if response.usage else 0
+            output_tokens = response.usage.completion_tokens if response.usage else 0
+            enhanced_text = response.choices[0].message.content if response.choices and response.choices[0].message else None
+
+            if not enhanced_text:
+                print(f"[{filename}] Warning: DeepSeek API response did not contain message content (Attempt {attempt + 1}/{MAX_RETRIES}).")
+                return None, input_tokens, output_tokens
+
+            print(f"[{filename}] DeepSeek API Call Successful (Attempt {attempt + 1}/{MAX_RETRIES}).")
+            return enhanced_text, input_tokens, output_tokens
+
+        except Exception as e:
+            last_exception = e
+            print(f"[{filename}] Error during DeepSeek API call (Attempt {attempt + 1}/{MAX_RETRIES}): {e}")
+            if attempt < MAX_RETRIES - 1:
+                print(f"[{filename}] Retrying in {RETRY_DELAY_SECONDS} seconds...")
+                await asyncio.sleep(RETRY_DELAY_SECONDS)
+            else:
+                print(f"[{filename}] Max retries reached. Giving up.")
+
+    # If loop finishes without returning, it means all retries failed
+    return None, 0, 0
+
 async def call_gemini_api_async(prompt_text, filename):
     """Calls the Gemini API asynchronously and returns content + usage."""
     print(f"[{filename}] Calling Gemini API ({GEMINI_MODEL_NAME})... Length: {len(prompt_text)}")
     try:
         model = genai.GenerativeModel(GEMINI_MODEL_NAME)
-        response = await model.generate_content_async(prompt_text)
-
+        # Ensure no explicit generation_config for temperature is passed
+        response = await model.generate_content_async(
+            prompt_text
+            # No generation_config here
+            )
+        # ... rest of gemini call ...
         input_tokens = 0
         output_tokens = 0
         if response.usage_metadata:
@@ -79,7 +141,7 @@ async def call_gemini_api_async(prompt_text, filename):
         if not response.parts:
              print(f"[{filename}] Warning: Gemini API response did not contain parts. Check safety ratings.")
              print(f"[{filename}] Prompt feedback: {response.prompt_feedback}")
-             return None, input_tokens, output_tokens # Return None content but include tokens
+             return None, input_tokens, output_tokens
 
         enhanced_text = response.text
         print(f"[{filename}] Gemini API Call Complete.")
@@ -87,7 +149,7 @@ async def call_gemini_api_async(prompt_text, filename):
 
     except Exception as e:
         print(f"[{filename}] Error during Gemini API call: {e}")
-        return None, 0, 0 # Return None content and 0 tokens on error
+        return None, 0, 0
 
 async def process_chapter(filename, base_prompt, semaphore):
     """Reads chapter, calls API async, writes file, returns results."""
@@ -106,8 +168,8 @@ async def process_chapter(filename, base_prompt, semaphore):
         # Format the full prompt
         full_prompt = re.sub(re.escape(PROMPT_PLACEHOLDER), chapter_content, base_prompt, count=1)
 
-        # Call the Gemini API asynchronously
-        enhanced_content, input_tokens, output_tokens = await call_gemini_api_async(full_prompt, filename)
+        # Call the DeepSeek API asynchronously
+        enhanced_content, input_tokens, output_tokens = await call_deepseek_api_async(full_prompt, filename)
 
         # Write the file immediately if API call was successful
         if enhanced_content is not None:
@@ -126,7 +188,7 @@ async def process_chapter(filename, base_prompt, semaphore):
 
 async def main():
     # --- Argument Parsing ---
-    parser = argparse.ArgumentParser(description="Enhance chapter text using Gemini API concurrently.")
+    parser = argparse.ArgumentParser(description="Enhance chapter text using DeepSeek API concurrently.")
     group = parser.add_mutually_exclusive_group() # Ensure conflicting args aren't used together
     group.add_argument("-c", "--chapter", type=str, help="Specify a single chapter filename (e.g., chapter_1337.txt) to process.")
     group.add_argument("-s", "--start-chapter", type=str, help="Specify the filename of the chapter to start processing from.")
@@ -154,7 +216,7 @@ async def main():
         print(f"Error: Prompt placeholder '{PROMPT_PLACEHOLDER}' not found in {PROMPT_FILE}. Exiting.")
         return
 
-    # 2. Configure Gemini API (already done globally after loading .env)
+    # 2. Configure API Client (DeepSeek client configured globally)
 
     # 3. Ensure output directory exists (synchronous)
     try:
@@ -231,11 +293,10 @@ async def main():
 
     for filename, input_tokens, output_tokens, write_success in results:
 
-        # Calculate cost for this specific result
-        input_cost = (input_tokens / 1000) * INPUT_PRICE_PER_1K_TOKENS
-        output_cost = (output_tokens / 1000) * OUTPUT_PRICE_PER_1K_TOKENS
+        # Calculate cost for this specific result (using updated price constants)
+        input_cost = (input_tokens / 1000) * DEEPSEEK_INPUT_PRICE
+        output_cost = (output_tokens / 1000) * DEEPSEEK_OUTPUT_PRICE
         call_cost = input_cost + output_cost
-        limit_exceeded_before = cumulative_cost >= MAX_CUMULATIVE_COST_USD
         cumulative_cost += call_cost
         limit_exceeded_after = cumulative_cost >= MAX_CUMULATIVE_COST_USD
 
